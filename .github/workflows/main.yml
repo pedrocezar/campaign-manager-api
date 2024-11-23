@@ -1,0 +1,77 @@
+name: CI/CD Pipeline with Render Integration
+
+on:
+  push:
+    branches:
+      - main  # Substitua pela branch principal
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'  # Substitua pela versão Node.js necessária
+
+    - name: Install dependencies and build
+      run: |
+        npm install
+        npm run prisma:generate:db_clients
+        npm run build
+
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-artifact
+        path: .  # Ou o diretório do build, como `dist/`
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download build artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifact
+
+    - name: Run tests with coverage
+      run: npm run test -- --coverage
+
+    - name: Validate coverage
+      run: |
+        COVERAGE=$(grep -oP 'All files.*?\K\d+(?=%)' coverage/lcov-report/index.html)
+        echo "Coverage: $COVERAGE%"
+        if [ "$COVERAGE" -lt 75 ]; then
+          echo "Coverage is below 75%! Failing..."
+          exit 1
+        fi
+        echo "Coverage is sufficient!"
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'  # Apenas na branch principal
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download build artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifact
+
+    - name: Start production server
+      run: npm run start:prod
+
+    - name: Trigger Render deploy
+      uses: render-examples/deploy-action@v1
+      with:
+        service-id: ${{ secrets.RENDER_SERVICE_ID }}
+        api-key: ${{ secrets.RENDER_API_KEY }}
